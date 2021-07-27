@@ -2,64 +2,57 @@ import * as CANNON from 'cannon-es/dist/cannon-es.js'
 import * as THREE from 'three/build/three.module.js'
 import Stats from 'three/examples/jsm/libs/stats.module.js'
 import { PointerLockControlsCannon } from 'cannon-es/examples/js/PointerLockControlsCannon.js'
+import { VoxelLandscape } from 'cannon-es/examples/js/VoxelLandscape.js'
+
 import { Interaction } from 'three.interaction';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 
 /**
- * Example of a really barebones version of a fps game.
+ * Example construction of a voxel world and player.
  */
 
     // three.js variables
 let camera, scene, renderer, stats
 let material
+let floor
 
 // cannon.js variables
 let world
 let controls
 const timeStep = 1 / 60
-let lastCallTime = performance.now()
+let lastCallTime = performance.now() / 1000
 let sphereShape
 let sphereBody
 let physicsMaterial
+let voxels
+
 const balls = []
 const ballMeshes = []
 const boxes = []
 const boxMeshes = []
 
-const instructions = document.getElementById('instructions')
+// Number of voxels
+const nx = 50
+const ny = 8
+const nz = 50
 
-
-// create an AudioListener and add it to the camera
-const listener = new THREE.AudioListener();
-
-
-// create a global audio source
-const sound = new THREE.Audio( listener );
-
-// load a sound and set it as the Audio object's buffer
-const audioLoader = new THREE.AudioLoader();
-
+// Scale of voxels
+const sx = 0.5
+const sy = 0.5
+const sz = 0.5
 
 initThree()
 initCannon()
 initPointerLock()
 animate()
 
-
-
-
-
 function initThree() {
-
     // Camera
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000)
 
-    camera.add( listener );
-
-
     // Scene
     scene = new THREE.Scene()
-    scene.fog = new THREE.Fog(0xffffff, 0, 500)
+    scene.fog = new THREE.Fog(0x000000, 0, 500)
 
     // Renderer
     renderer = new THREE.WebGLRenderer({ antialias: true })
@@ -79,17 +72,17 @@ function initThree() {
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.1)
     scene.add(ambientLight)
 
-    const spotlight = new THREE.SpotLight(0xffffff, 0.9, 0, Math.PI / 4, 1)
+    const spotlight = new THREE.SpotLight(0xffffff, 0.7, 0, Math.PI / 4, 1)
     spotlight.position.set(10, 30, 20)
     spotlight.target.position.set(0, 0, 0)
 
     spotlight.castShadow = true
 
-    spotlight.shadow.camera.near = 10
-    spotlight.shadow.camera.far = 100
-    spotlight.shadow.camera.fov = 30
+    spotlight.shadow.camera.near = 20
+    spotlight.shadow.camera.far = 50
+    spotlight.shadow.camera.fov = 40
 
-    // spotlight.shadow.bias = -0.0001
+    spotlight.shadow.bias = -0.001
     spotlight.shadow.mapSize.width = 2048
     spotlight.shadow.mapSize.height = 2048
 
@@ -99,9 +92,9 @@ function initThree() {
     material = new THREE.MeshLambertMaterial({ color: 0xdddddd })
 
     // Floor
-    const floorGeometry = new THREE.PlaneBufferGeometry(300, 300, 100, 100)
+    const floorGeometry = new THREE.PlaneBufferGeometry(300, 300, 50, 50)
     floorGeometry.rotateX(-Math.PI / 2)
-    const floor = new THREE.Mesh(floorGeometry, material)
+    floor = new THREE.Mesh(floorGeometry, material)
     floor.receiveShadow = true
     scene.add(floor)
 
@@ -115,6 +108,7 @@ function onWindowResize() {
 }
 
 function initCannon() {
+    // Setup world
     world = new CANNON.World()
 
     // Tweak contact properties.
@@ -133,6 +127,8 @@ function initCannon() {
 
     world.gravity.set(0, -20, 0)
 
+    world.broadphase.useBoundingBoxes = true
+
     // Create a slippery material (friction coefficient = 0.0)
     physicsMaterial = new CANNON.Material('physics')
     const physics_physics = new CANNON.ContactMaterial(physicsMaterial, physicsMaterial, {
@@ -148,7 +144,7 @@ function initCannon() {
     sphereShape = new CANNON.Sphere(radius)
     sphereBody = new CANNON.Body({ mass: 5, material: physicsMaterial })
     sphereBody.addShape(sphereShape)
-    sphereBody.position.set(0, 5, 0)
+    sphereBody.position.set(nx * sx * 0.5, ny * sy + radius * 2, nz * sz * 0.5)
     sphereBody.linearDamping = 0.9
     world.addBody(sphereBody)
 
@@ -159,123 +155,44 @@ function initCannon() {
     groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0)
     world.addBody(groundBody)
 
-    // Add boxes both in cannon.js and three.js
-    const halfExtents = new CANNON.Vec3(1, 1, 1)
-    const boxShape = new CANNON.Box(halfExtents)
-    const boxGeometry = new THREE.BoxBufferGeometry(halfExtents.x * 2, halfExtents.y * 2, halfExtents.z * 2)
+    // Voxels
+    voxels = new VoxelLandscape(world, nx, ny, nz, sx, sy, sz)
 
-    // myClickableAudioBox
-    //const interaction = new Interaction(renderer, scene, camera);
+    for (let i = 0; i < nx; i++) {
+        for (let j = 0; j < ny; j++) {
+            for (let k = 0; k < nz; k++) {
+                let filled = true
 
-    const myClickableAudioBox = new THREE.Mesh(
-        new THREE.BoxGeometry(1, 1, 1),
-        new THREE.MeshBasicMaterial({ color: 0xffffff }),
-    );
-    scene.add(myClickableAudioBox);
-    myClickableAudioBox.cursor = 'pointer';
-    myClickableAudioBox.on('click',     audioLoader.load( 'sounds/방탄소년단_Dynamite.mp3', function( buffer ) {
-        sound.setBuffer( buffer );
-        sound.setLoop( true );
-        sound.setVolume( 0.5 );
-        sound.play();
-    }));
-    myClickableAudioBox.on('touchstart', function(ev) {});
-    myClickableAudioBox.on('touchcancel', function(ev) {});
-    myClickableAudioBox.on('touchmove', function(ev) {});
-    myClickableAudioBox.on('touchend', function(ev) {});
-    myClickableAudioBox.on('mousedown', function(ev) {});
-    myClickableAudioBox.on('mouseout', function(ev) {});
-    myClickableAudioBox.on('mouseover', function(ev) {});
-    myClickableAudioBox.on('mousemove', function(ev) {});
-    myClickableAudioBox.on('mouseup', function(ev) {});
+                // Insert map constructing logic here
+                if (Math.sin(i * 0.1) * Math.sin(k * 0.1) < (j / ny) * 2 - 1) {
+                    filled = false
+                }
 
-    {
-        const objLoader = new OBJLoader();
-        objLoader.load('./src/assets/uploads_files_38696_Stereo.obj', (obj) => {
-            const root = obj.scene;
-            root.scale.set(30,30,30);
-            root.position.x = 20;
-            root.position.z = 0;
-            scene.add(root);
-    }
-
-    /*
-    for (let i = 0; i < 7; i++) {
-        const boxBody = new CANNON.Body({ mass: 5 })
-        boxBody.addShape(boxShape)
-        const boxMesh = new THREE.Mesh(boxGeometry, material)
-
-        const x = (Math.random() - 0.5) * 20
-        const y = (Math.random() - 0.5) * 1 + 1
-        const z = (Math.random() - 0.5) * 20
-
-        boxBody.position.set(x, y, z)
-        boxMesh.position.copy(boxBody.position)
-
-        boxMesh.castShadow = true
-        boxMesh.receiveShadow = true
-
-        world.addBody(boxBody)
-        scene.add(boxMesh)
-        boxes.push(boxBody)
-        boxMeshes.push(boxMesh)
-    }
-
-     */
-/*
-    // Add linked boxes
-    const size = 0.5
-    const mass = 0.3
-    const space = 0.1 * size
-    const N = 5
-    const halfExtents2 = new CANNON.Vec3(size, size, size * 0.1)
-    const boxShape2 = new CANNON.Box(halfExtents2)
-    const boxGeometry2 = new THREE.BoxBufferGeometry(halfExtents2.x * 2, halfExtents2.y * 2, halfExtents2.z * 2)
-
-    let last
-    for (let i = 0; i < N; i++) {
-        // Make the fist one static to support the others
-        const boxBody = new CANNON.Body({ mass: i === 0 ? 0 : mass })
-        boxBody.addShape(boxShape2)
-        const boxMesh = new THREE.Mesh(boxGeometry2, material)
-        boxBody.position.set(5, (N - i) * (size * 2 + 2 * space) + size * 2 + space, 0)
-        boxBody.linearDamping = 0.01
-        boxBody.angularDamping = 0.01
-
-        boxMesh.castShadow = true
-        boxMesh.receiveShadow = true
-
-        world.addBody(boxBody)
-        scene.add(boxMesh)
-        boxes.push(boxBody)
-        boxMeshes.push(boxMesh)
-
-        if (i > 0) {
-            // Connect the body to the last one
-            const constraint1 = new CANNON.PointToPointConstraint(
-                boxBody,
-                new CANNON.Vec3(-size, size + space, 0),
-                last,
-                new CANNON.Vec3(-size, -size - space, 0)
-            )
-            const constranit2 = new CANNON.PointToPointConstraint(
-                boxBody,
-                new CANNON.Vec3(size, size + space, 0),
-                last,
-                new CANNON.Vec3(size, -size - space, 0)
-            )
-            world.addConstraint(constraint1)
-            world.addConstraint(constranit2)
+                voxels.setFilled(i, j, k, filled)
+            }
         }
+    }
 
-        last = boxBody
+    voxels.update()
+
+    console.log(`${voxels.boxes.length} voxel physics bodies`)
+
+    // Voxel meshes
+    for (let i = 0; i < voxels.boxes.length; i++) {
+        const box = voxels.boxes[i]
+        const voxelGeometry = new THREE.BoxBufferGeometry(voxels.sx * box.nx, voxels.sy * box.ny, voxels.sz * box.nz)
+        const voxelMesh = new THREE.Mesh(voxelGeometry, material)
+        voxelMesh.castShadow = true
+        voxelMesh.receiveShadow = true
+        boxMeshes.push(voxelMesh)
+        scene.add(voxelMesh)
     }
 
     // The shooting balls
     const shootVelocity = 15
     const ballShape = new CANNON.Sphere(0.2)
     const ballGeometry = new THREE.SphereBufferGeometry(ballShape.radius, 32, 32)
-*/
+
     // Returns a vector pointing the the diretion the camera is at
     function getShootDirection() {
         const vector = new THREE.Vector3(0, 0, 1)
@@ -315,8 +232,6 @@ function initCannon() {
         ballBody.position.set(x, y, z)
         ballMesh.position.copy(ballBody.position)
     })
-
-
 }
 
 function initPointerLock() {
@@ -355,9 +270,9 @@ function animate() {
         }
 
         // Update box positions
-        for (let i = 0; i < boxes.length; i++) {
-            boxMeshes[i].position.copy(boxes[i].position)
-            boxMeshes[i].quaternion.copy(boxes[i].quaternion)
+        for (let i = 0; i < voxels.boxes.length; i++) {
+            boxMeshes[i].position.copy(voxels.boxes[i].position)
+            boxMeshes[i].quaternion.copy(voxels.boxes[i].quaternion)
         }
     }
 

@@ -7,6 +7,7 @@
     "serve": "vite preview"
   },
   "dependencies": {
+    "cannon": "^0.6.2",
     "cannon-es": "^0.18.0",
     "three": "^0.130.1",
     "three.interaction": "^0.2.3",
